@@ -33,10 +33,18 @@
 配置完成 [LangBot](https://github.com/RockChinQ/LangBot) 主程序后使用管理员账号向机器人发送命令即可安装：
 
 ```
-!plugin get <你的插件发布仓库地址>
+!plugin get https://github.com/exneverbur/ShowMeNav.git
 ```
 或查看详细的[插件安装说明](https://docs.langbot.app/plugin/plugin-intro.html#%E6%8F%92%E4%BB%B6%E7%94%A8%E6%B3%95)
 
 ## 使用
+$查询 基金代码   实时获取对应基金的当前估值
 
+$订阅 基金代码   订阅此基金，播报时将会查询此基金估值
+
+$开启播报 开启群播报（不开启则无法进行播报，每次重启机器人时需发送一遍此指令）
+
+每日自动播报时间如下：
+
+['10:00', '12:00', '14:00', '14:50', '16:32', '16:33','15:19']
 <!-- 插件开发者自行填写插件使用说明 -->

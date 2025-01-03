@@ -104,7 +104,6 @@ class MyPlugin(BasePlugin):
     def check_time(self):
         # 获取当前时间并格式化为 'HH:MM'
         current_time = datetime.now().strftime('%H:%M')
-        print("当前时间：", current_time)
 
         # 如果当前时间与指定时间列表中的任何一个时间匹配，则发送请求
         if current_time in self.specified_times:
@@ -170,14 +169,13 @@ class MyPlugin(BasePlugin):
 
     async def run(self, ctx:EventContext):
         while True:
-            # isTime = self.check_time()
-            isTime = True
+            isTime = self.check_time()
             if isTime:
                 msg = ['你的基金净值播报员来啦！']
                 for group_id in self.file['group_ids']:
                     for fCode in self.file[str(group_id)]:
                         data = self.request(fCode)
-                        msg.append(f"[{data['fundcode']}]{data['name']} 当前涨幅: {data['gszzl']}({data['gztime']})")
+                        msg.append(f"[\n{data['fundcode']}]{data['name']} 当前涨幅: {data['gszzl']}({data['gztime']})")
                     if len(msg) > 0:
                         await ctx.send_message("group", group_id, MessageChain(msg))
             await asyncio.sleep(self.check_daily)

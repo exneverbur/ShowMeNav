@@ -10,18 +10,23 @@ from datetime import datetime
 import requests
 import re
 # 注册插件
-@register(name="ShowMeNav", description="基金净值查询助手", version="0.1", author="exneverbur")
+@register(name="ShowMeNav", description="基金净值查询小助手+自动播报员!", version="1.0", author="exneverbur")
 class MyPlugin(BasePlugin):
     # 指定的时间列表，格式为 'HH:MM' 的字符串
     specified_times = ['10:00', '12:00', '14:00', '14:50']
+    # 订阅列表的保存路径
     file_path = "show_me_nav.json"
-    check_daily = 55
+    # 每隔多少秒检查一次时间
+    check_daily = 5
 
     # 插件加载时触发
     def __init__(self, host: APIHost):
         # 解析json文件 保存到self.file中
         self.read_or_create_json()
         # 创建定时器 每分钟检查 整点报时
+        print(f"[基金播报助手]已创建定时任务, 当前接受消息的群号: {self.file.get('group_ids', [])}")
+
+        self.run_task = asyncio.create_task(self.run())
 
 
     # 异步初始化
@@ -60,13 +65,12 @@ class MyPlugin(BasePlugin):
                     await ctx.reply(["订阅任务已经开始执行了~"])
                     return
                 try:
-                    self.run_task = asyncio.create_task(self.run(ctx))
+                    self.run_task = asyncio.create_task(self.run())
                     await ctx.reply(["订阅任务开始执行"])
                 except Exception as e:
                     self.ap.logger.error(f"创建订阅任务失败: {e}")
-
-        # 阻止该事件默认行为（向接口获取回复）
-        ctx.prevent_default()
+            # 阻止该事件默认行为（向接口获取回复）
+            ctx.prevent_default()
 
 
     # 插件卸载时触发
@@ -167,15 +171,26 @@ class MyPlugin(BasePlugin):
             # 如果 fCode 已经存在，则什么都不做
         self.write_json()
 
-    async def run(self, ctx:EventContext):
+    async def run(self):
         while True:
-            isTime = self.check_time()
-            if isTime:
+            is_time = self.check_time()
+            if is_time:
                 msg = ['你的基金净值播报员来啦！']
+                print("yes")
                 for group_id in self.file['group_ids']:
+                    print(group_id)
                     for fCode in self.file[str(group_id)]:
                         data = self.request(fCode)
-                        msg.append(f"[\n{data['fundcode']}]{data['name']} 当前涨幅: {data['gszzl']}({data['gztime']})")
-                    if len(msg) > 0:
-                        await ctx.send_message("group", group_id, MessageChain(msg))
+                        msg.append(f"\n[{data['fundcode']}]{data['name']} 当前涨幅: {data['gszzl']}({data['gztime']})")
+                    print(msg)
+                    if len(msg) > 1:
+                        try:
+                            await self.host.send_active_message(
+                                adapter=self.host.get_platform_adapters()[0],
+                                target_type="group",
+                                target_id=group_id,
+                                message=MessageChain(msg)
+                            )
+                        except Exception:
+                            pass
             await asyncio.sleep(self.check_daily)

@@ -17,7 +17,7 @@ class MyPlugin(BasePlugin):
     # 订阅列表的保存路径
     file_path = "show_me_nav.json"
     # 每隔多少秒检查一次时间
-    check_daily = 5
+    check_daily = 55
 
     # 插件加载时触发
     def __init__(self, host: APIHost):

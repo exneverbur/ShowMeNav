@@ -17,7 +17,7 @@ class MyPlugin(BasePlugin):
     # 订阅列表的保存路径
     file_path = "show_me_nav.json"
     # 每隔多少秒检查一次时间
-    check_daily = 55
+    check_daily = 30
 
     # 插件加载时触发
     def __init__(self, host: APIHost):
@@ -177,11 +177,9 @@ class MyPlugin(BasePlugin):
             if is_time:
                 msg = ['你的基金净值播报员来啦！']
                 for group_id in self.file['group_ids']:
-                    print(group_id)
                     for fCode in self.file[str(group_id)]:
                         data = self.request(fCode)
                         msg.append(f"\n[{data['fundcode']}]{data['name']} 当前涨幅: {data['gszzl']}({data['gztime']})")
-                    print(msg)
                     if len(msg) > 1:
                         try:
                             await self.host.send_active_message(

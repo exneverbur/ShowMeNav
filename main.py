@@ -176,7 +176,6 @@ class MyPlugin(BasePlugin):
             is_time = self.check_time()
             if is_time:
                 msg = ['你的基金净值播报员来啦！']
-                print("yes")
                 for group_id in self.file['group_ids']:
                     print(group_id)
                     for fCode in self.file[str(group_id)]:

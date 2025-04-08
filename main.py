@@ -2,15 +2,20 @@ import asyncio
 
 from pkg.plugin.context import register, handler, llm_func, BasePlugin, APIHost, EventContext
 from pkg.plugin.events import *  # 导入事件类
-from pkg.platform.types import Plain, MessageChain
+from pkg.platform.types.message import Plain, MessageChain, Image
 import os
 import json
 import time
 from datetime import datetime
 import requests
 import re
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 # 注册插件
-@register(name="ShowMeNav", description="基金净值查询小助手+自动播报员!", version="1.0", author="exneverbur")
+@register(name="ShowMeNav", description="基金净值查询小助手+自动播报员!", version="1.1", author="exneverbur")
 class MyPlugin(BasePlugin):
     # 指定的时间列表，格式为 'HH:MM' 的字符串
     specified_times = ['10:00', '12:00', '14:00', '14:50']
@@ -18,6 +23,16 @@ class MyPlugin(BasePlugin):
     file_path = "show_me_nav.json"
     # 每隔多少秒检查一次时间
     check_daily = 30
+
+    # 云图爬取相关配置
+    # 是否开启云图下载功能
+    need_yuntu = True
+    # 云图下载位置(发送完成后会自动删除图片)
+    download_dir = os.path.join('plugins', 'ShowMeNav', 'temp')
+    # chrome driver的路径 driver必须与你自己的谷歌浏览器的版本对应
+    # 可以在此网站下载 https://registry.npmmirror.com/binary.html?path=chrome-for-testing/
+    chrome_driver_path = "C:/Users/lifen/Desktop/langbot/chromedriver-win64/chromedriver.exe"
+    target_url = "https://dapanyuntu.com/"
 
     # 插件加载时触发
     def __init__(self, host: APIHost):
@@ -69,8 +84,10 @@ class MyPlugin(BasePlugin):
                     await ctx.reply(["订阅任务开始执行"])
                 except Exception as e:
                     self.ap.logger.error(f"创建订阅任务失败: {e}")
+            elif command == "$推送基金":
+                await self.push_nav_message(group_id)
             # 阻止该事件默认行为（向接口获取回复）
-            ctx.prevent_default()
+            ctx.prevent_postorder()
 
 
     # 插件卸载时触发
@@ -175,19 +192,88 @@ class MyPlugin(BasePlugin):
         while True:
             is_time = self.check_time()
             if is_time:
-                msg = ['你的基金净值播报员来啦！']
-                for group_id in self.file['group_ids']:
-                    for fCode in self.file[str(group_id)]:
-                        data = self.request(fCode)
-                        msg.append(f"\n[{data['fundcode']}]{data['name']} 当前涨幅: {data['gszzl']}({data['gztime']})")
-                    if len(msg) > 1:
-                        try:
-                            await self.host.send_active_message(
-                                adapter=self.host.get_platform_adapters()[0],
-                                target_type="group",
-                                target_id=group_id,
-                                message=MessageChain(msg)
-                            )
-                        except Exception:
-                            pass
+                await self.push_nav_message()
+
             await asyncio.sleep(self.check_daily)
+
+    async def push_nav_message(self, target_group_id=None):
+        yuntu_path = None
+        if self.need_yuntu:
+            yuntu_path = await self.download_yuntu()
+        try:
+            msg = ['你的基金净值播报员来啦！']
+            # 下载云图
+            for group_id in self.file['group_ids']:
+                if target_group_id is not None and group_id != target_group_id:
+                    continue
+                for fCode in self.file[str(group_id)]:
+                    data = self.request(fCode)
+                    msg.append(f"\n[{data['fundcode']}]{data['name']} 当前涨幅: {data['gszzl']}({data['gztime']})")
+                try:
+                    if len(msg) > 1:
+                        await self.host.send_active_message(
+                            adapter=self.host.get_platform_adapters()[0],
+                            target_type="group",
+                            target_id=group_id,
+                            message=MessageChain(msg)
+                        )
+                    if self.need_yuntu and yuntu_path is not None:
+                        await self.host.send_active_message(
+                            adapter=self.host.get_platform_adapters()[0],
+                            target_type="group",
+                            target_id=group_id,
+                            message=MessageChain([Image(path=yuntu_path)]),
+                        )
+                except Exception as e:
+                    print("推送基金消息时出错:", e)
+        finally:
+            if yuntu_path is not None:
+                os.remove(yuntu_path)
+
+
+    # 下载云图
+    async def download_yuntu(self):
+        # 配置 Chrome 选项
+        chrome_options = webdriver.ChromeOptions()
+        # 启用无头模式
+        chrome_options.add_argument("--headless")
+        # 指定下载路径
+        absolute_path = os.path.abspath(self.download_dir)
+        prefs = {
+            "download.default_directory": absolute_path,  # 设置默认下载路径
+            "download.prompt_for_download": False,  # 禁用下载提示
+            "download.directory_upgrade": True,
+            "safebrowsing.enabled": True
+        }
+        chrome_options.add_experimental_option("prefs", prefs)
+        # 初始化 WebDriver
+        service = Service(self.chrome_driver_path)
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+
+        try:
+            # 打开目标网页
+            driver.get(self.target_url)
+            time.sleep(3)  # 根据实际情况调整等待时间以确保页面加载完毕
+
+            wait = WebDriverWait(driver, 20)  # 最长等待 20 秒
+            capture_button = wait.until(EC.element_to_be_clickable((By.ID, "capture")))
+            capture_button.click()
+            time.sleep(3)
+            print("开始下载图片, 等待图片下载完成中")
+            download_button = driver.find_element(By.ID, "saveCaptureBtn")
+            download_button.click()
+            time.sleep(5)
+
+            # 获取目录里最新的图片
+            downloaded_files = os.listdir(absolute_path)
+            downloaded_files = [f for f in downloaded_files if os.path.isfile(os.path.join(absolute_path, f))]
+            latest_file = max(
+                downloaded_files,
+                key=lambda f: os.path.getmtime(os.path.join(absolute_path, f))
+            )
+            # 返回最新文件的完整路径
+            print("路径:",os.path.join(absolute_path, latest_file))
+            return os.path.join(absolute_path, latest_file)
+        finally:
+            # 关闭浏览器
+            driver.quit()

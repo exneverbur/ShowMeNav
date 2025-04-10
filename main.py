@@ -1,5 +1,3 @@
-import asyncio
-
 from pkg.plugin.context import register, handler, llm_func, BasePlugin, APIHost, EventContext
 from pkg.plugin.events import *  # 导入事件类
 from pkg.platform.types.message import Plain, MessageChain, Image
@@ -14,15 +12,15 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from apscheduler.schedulers.asyncio  import AsyncIOScheduler
+
 # 注册插件
-@register(name="ShowMeNav", description="基金净值查询小助手+自动播报员!", version="1.1", author="exneverbur")
+@register(name="ShowMeNav", description="基金净值查询小助手+自动播报员!", version="1.2", author="exneverbur")
 class MyPlugin(BasePlugin):
     # 指定的时间列表，格式为 'HH:MM' 的字符串
     specified_times = ['10:00', '12:00', '14:00', '14:50']
     # 订阅列表的保存路径
     file_path = "show_me_nav.json"
-    # 每隔多少秒检查一次时间
-    check_daily = 30
 
     # 云图爬取相关配置
     # 是否开启云图下载功能
@@ -38,15 +36,26 @@ class MyPlugin(BasePlugin):
     def __init__(self, host: APIHost):
         # 解析json文件 保存到self.file中
         self.read_or_create_json()
-        # 创建定时器 每分钟检查 整点报时
+        self.scheduler = AsyncIOScheduler()
+        # 创建定时器
+        for t in self.specified_times:
+            hour, minute = map(int, t.split(':'))
+            self.scheduler.add_job(
+                self.push_nav_message,
+                'cron',
+                day_of_week='mon-fri',
+                hour=hour,
+                minute=minute,
+                timezone='Asia/Shanghai'
+            )
         print(f"[基金播报助手]已创建定时任务, 当前接受消息的群号: {self.file.get('group_ids', [])}")
-
-        self.run_task = asyncio.create_task(self.run())
 
 
     # 异步初始化
     async def initialize(self):
-        pass
+        if not self.scheduler.running:
+            self.scheduler.start()
+            print("[基金播报助手] 调度器已启动")
 
     # 当收到群消息时触发
     @handler(GroupNormalMessageReceived)
@@ -75,15 +84,6 @@ class MyPlugin(BasePlugin):
                     data = self.request(args)
                     res = f"[{data['fundcode']}]{data['name']} 当前涨幅: {data['gszzl']}({data['gztime']})"
                     ctx.add_return("reply", [res])
-            elif command == "$开启播报":
-                if hasattr(self, 'run_task') and not self.run_task.done():
-                    await ctx.reply(["订阅任务已经开始执行了~"])
-                    return
-                try:
-                    self.run_task = asyncio.create_task(self.run())
-                    await ctx.reply(["订阅任务开始执行"])
-                except Exception as e:
-                    self.ap.logger.error(f"创建订阅任务失败: {e}")
             elif command == "$推送基金":
                 await self.push_nav_message(group_id)
             # 阻止该事件默认行为（向接口获取回复）
@@ -92,12 +92,13 @@ class MyPlugin(BasePlugin):
 
     # 插件卸载时触发
     def __del__(self):
-        pass
+        if self.scheduler.running:
+            self.scheduler.shutdown()
+            print("[基金播报助手] 调度器已关闭")
 
     # 读取json配置
     def read_or_create_json(self):
         # 检查文件是否存在
-        print("基金助手初始化")
         if not os.path.exists(self.file_path):
             # 创建一个空的字典作为JSON文件的基础结构
             data = {
@@ -187,14 +188,6 @@ class MyPlugin(BasePlugin):
                 data[str(group_id)].append(fCode)
             # 如果 fCode 已经存在，则什么都不做
         self.write_json()
-
-    async def run(self):
-        while True:
-            is_time = self.check_time()
-            if is_time:
-                await self.push_nav_message()
-
-            await asyncio.sleep(self.check_daily)
 
     async def push_nav_message(self, target_group_id=None):
         yuntu_path = None

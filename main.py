@@ -13,9 +13,10 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from apscheduler.schedulers.asyncio  import AsyncIOScheduler
+from bs4 import BeautifulSoup
 
 # 注册插件
-@register(name="ShowMeNav", description="基金净值查询小助手+自动播报员!", version="1.2", author="exneverbur")
+@register(name="ShowMeNav", description="基金净值查询小助手+自动播报员!", version="1.3", author="exneverbur")
 class MyPlugin(BasePlugin):
     # 指定的时间列表，格式为 'HH:MM' 的字符串
     specified_times = ['10:00', '12:00', '14:00', '14:50']
@@ -26,11 +27,16 @@ class MyPlugin(BasePlugin):
     # 是否开启云图下载功能
     need_yuntu = True
     # 云图下载位置(发送完成后会自动删除图片)
-    download_dir = os.path.join('plugins', 'ShowMeNav', 'temp')
+    download_dir = os.path.join('plugins', 'ShowMeNav')
     # chrome driver的路径 driver必须与你自己的谷歌浏览器的版本对应
     # 可以在此网站下载 https://registry.npmmirror.com/binary.html?path=chrome-for-testing/
-    chrome_driver_path = "C:/Users/lifen/Desktop/langbot/chromedriver-win64/chromedriver.exe"
+    chrome_driver_path = "D:/bot/langbot/chromedriver-win64/chromedriver.exe"
     target_url = "https://dapanyuntu.com/"
+
+    # 是否同时推送百度热搜
+    neet_baidu_trending = True
+    # 控制推送热搜前多少条
+    baidu_trending_size = 15
 
     # 插件加载时触发
     def __init__(self, host: APIHost):
@@ -82,12 +88,13 @@ class MyPlugin(BasePlugin):
                     ctx.add_return("reply", ["请输入要查询的基金代号"])
                 else:
                     data = self.request(args)
-                    res = f"[{data['fundcode']}]{data['name']} 当前涨幅: {data['gszzl']}({data['gztime']})"
+                    res = f"[{data['fundcode']}]{data['name']} 当前涨幅: {(data['gszzl'] + ' ↑ ') if data['gszzl'] >= 0 else (data['gszzl'] + ' ↓ ')} ({data['gztime']})"
                     ctx.add_return("reply", [res])
             elif command == "$推送基金":
                 await self.push_nav_message(group_id)
             # 阻止该事件默认行为（向接口获取回复）
             ctx.prevent_postorder()
+            ctx.prevent_default()
 
 
     # 插件卸载时触发
@@ -217,6 +224,13 @@ class MyPlugin(BasePlugin):
                             target_id=group_id,
                             message=MessageChain([Image(path=yuntu_path)]),
                         )
+                    if self.neet_baidu_trending and self.neet_baidu_trending > 0:
+                        await self.host.send_active_message(
+                            adapter=self.host.get_platform_adapters()[0],
+                            target_type="group",
+                            target_id=group_id,
+                            message=MessageChain(self.reply_trending()),
+                        )
                 except Exception as e:
                     print("推送基金消息时出错:", e)
         finally:
@@ -270,3 +284,43 @@ class MyPlugin(BasePlugin):
         finally:
             # 关闭浏览器
             driver.quit()
+
+    def fetch_baidu_trending(self):
+        url = "https://top.baidu.com/board?tab=realtime"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+        }
+
+        response = requests.get(url, headers=headers)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        trending_list = []
+        items = soup.select(".category-wrap_iQLoo")
+        # 提取热搜标题和链接
+        for item in items[:self.baidu_trending_size]:
+            title_elem = item.select_one(".c-single-text-ellipsis")
+            link_elem = item.select_one("a")
+            img_elem = item.select_one("img")  # 图片标签
+
+            title = title_elem.get_text(strip=True) if title_elem else "无标题"
+            link = link_elem['href'] if link_elem and 'href' in link_elem.attrs else "#"
+            image = img_elem['src'] if img_elem and 'src' in img_elem.attrs else None
+
+            trending_list.append({
+                "title": title,
+                "link": link,
+                "image": image
+            })
+
+        return trending_list
+
+    def reply_trending(self):
+        trends = self.fetch_baidu_trending()
+        search_result = ["【百度热搜】实时榜单：\n"]
+        for i, trend in enumerate(trends, start=1):
+            search_result.append(f"{i}. {trend['title']}\n")
+            if trend['image'] is not None and trend['image'].startswith("https"):
+                search_result.append(Image(url=trend['image']))
+                search_result.append('\n')
+            search_result.append(f"{trend['link']}\n")
+
+        return search_result
